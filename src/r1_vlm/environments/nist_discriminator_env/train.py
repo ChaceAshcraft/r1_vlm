@@ -1,4 +1,7 @@
 import os
+import wandb
+
+wandb.login()
 
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 from trl import GRPOConfig, ModelConfig
@@ -9,7 +12,7 @@ from r1_vlm.environments.nist_discriminator_env.nist_discriminator_env import (
 )
 
 os.environ["WANDB_ENTITY"] = "chace-ashcraft"
-os.environ["WANDB_PROJECT"] = "nist-discriminator-training"
+os.environ["WANDB_PROJECT"] = "trl-vlm-experiment"
 
 vf_env = NISTDiscriminatorEnv()
 dataset = vf_env.get_dataset()
@@ -54,11 +57,11 @@ training_args = GRPOConfig(
     lr_scheduler_type="cosine",
     warmup_steps=0,
     logging_steps=1,
-    save_steps=20,
-    save_total_limit=50,
+    save_steps=50,
+    save_total_limit=2,
     num_train_epochs=1,
-    per_device_train_batch_size=5,
-    num_generations=15,
+    per_device_train_batch_size=4,
+    num_generations=4,
     gradient_accumulation_steps=4,
     gradient_checkpointing=gradient_checkpointing,
     bf16=True,

@@ -10,7 +10,7 @@ from torchvision.io.image import decode_image
 from copy import deepcopy
 from torch.utils.data import random_split
 
-from datasets import Dataset, load_dataset
+from datasets import Dataset, load_dataset, load_from_disk
 from trl.trainer.grpo_trainer import RewardFunc
 from verifiers.parsers import XMLParser
 from r1_vlm.datasets.utils import preprocess_r1_dataset
@@ -58,6 +58,26 @@ PROMPT_TEMPLATE = [
 
 IMAGE_PLACEHOLDER = "IMAGE_PLACEHOLDER"
 
+def _inject_images(examples):
+    messages_batch = examples["messages"]
+    images_batch = examples["image"]
+    
+    # Validate types once for the first example
+    if not isinstance(messages_batch[0], list):
+        raise ValueError(f"Expected a list of messages, got {type(messages_batch[0])}")
+    if not isinstance(images_batch[0], PIL.Image.Image):
+        raise ValueError(f"Expected a PIL image, got {type(images_batch[0])}")
+    
+    for messages, image in zip(messages_batch, images_batch):
+        if image_size:
+            image = image.resize(image_size)
+        
+        for message in messages:
+            content = message["content"]
+            [item.update({"image": image}) for item in content if item["type"] == "image" and item["image"] == IMAGE_PLACEHOLDER]
+    
+    return examples
+
 
 class KaggleDataset(Dataset):
     def __init__(self, path_to_kaggle_dir: str, path_to_pig_images: str):
@@ -81,7 +101,8 @@ class KaggleDataset(Dataset):
     def __len__(self):
         return self.num_kaggle_images + self.num_pig_images
 
-    def __getitem__(self, idx):
+
+    def _get_one_item(self, idx):
         if idx < self.num_kaggle_images:
             img_path = os.path.join(self.path_to_kaggle_dir, self.kaggle_image_paths[idx])
             label = torch.tensor(int(self.kaggle_labels[idx]))
@@ -92,12 +113,22 @@ class KaggleDataset(Dataset):
         image = self.transform(img)
         messages = deepcopy(PROMPT_TEMPLATE)
 
-        for message in messages:
-            content = message["content"]
-            [item.update({"image": image}) for item in content if
-             item["type"] == "image" and item["image"] == IMAGE_PLACEHOLDER]
+        return {"messages": messages, "image": image, "label": label}
 
-        return {"image": image, "label": label}
+    def __getitem__(self, idx):
+        if isinstance(idx, int):
+            return self._get_one_item(idx)
+        else:
+            messages = []
+            images = []
+            labels = []
+            for i in idx:
+                it = self._get_one_item(i)
+                messages.append(it['messages'])
+                images.append(it['image'])
+                labels.append(it['label'])
+            return {"messages": messages, "image": images, "label": labels}
+
 
 
 def make_datasets(path_to_kaggle_dir, path_to_pig_images):
@@ -130,14 +161,21 @@ class NISTDiscriminatorEnv(SimpleVisionEnv):
     ):
         super().__init__(system_prompt=system_prompt, **kwargs)
         self.parser = XMLParser(fields=["think", "answer"])
-        self.path_to_pig_images = "pig_images/"
-        self.path_to_kaggle_dir = "human_vs_ai_kaggle/"
+        self.path_to_pig_images = "/mnt/workspace/r1_vlm_try1/data/pig_images/images_generated/"
+        self.path_to_kaggle_dir = "/mnt/workspace/r1_vlm_try1/data/human_vs_ai_kaggle/"
+        self.path_to_saved_dataset = "/mnt/workspace/r1_vlm_try1/data/r1_vlm_nist_hf_dataset/"
     
     def get_dataset(self) -> Dataset:
-        train_dataset, val_dataset, test_dataset = make_datasets(self.path_to_kaggle_dir, self.path_to_pig_images)
-        dataset = train_dataset
-        return dataset
-    
+        #def generator():
+        #    train_dataset, val_dataset, test_dataset = make_datasets(self.path_to_kaggle_dir, self.path_to_pig_images)
+        #    for i in range(len(train_dataset)):
+        #        yield train_dataset[i]
+
+        #dataset = Dataset.from_generator(generator)
+        dataset = load_from_disk(self.path_to_saved_dataset)
+        dataset = preprocess_r1_dataset(dataset)
+        return dataset    
+
     def get_rubric(self, **kwargs: Any) -> List[RewardFunc]:
         def correctness_reward_func(completions, **kwargs) -> List[float]:
             
